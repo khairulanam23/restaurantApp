@@ -14,92 +14,37 @@ import { Op } from "sequelize";
 
 const router = express.Router();
 
-// List Tables
-router.get(
-  "/",
-  authenticate,
-  asyncHandler(async (req, res) => {
-    const { status, location, page = 1, limit = 20 } = req.query;
-    const where = { isActive: true };
+// Helper function to check if string is UUID
+const isUUID = (id) => {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    id
+  );
+};
 
-    if (status) where.status = status;
-    if (location) where.location = location;
-
-    const tables = await Table.findAll({
-      where,
-      include: [
-        {
-          model: Order,
-          as: "orders",
-          limit: 1,
-          order: [["createdAt", "DESC"]],
-        },
-      ],
-      limit: Number.parseInt(limit),
-      offset: (Number.parseInt(page) - 1) * Number.parseInt(limit),
-      order: [["tableNumber", "ASC"]],
-    });
-
-    const total = await Table.count({ where });
-
-    res.json({
-      success: true,
-      data: {
-        tables,
-        pagination: {
-          page: Number.parseInt(page),
-          limit: Number.parseInt(limit),
-          total,
-        },
-      },
-    });
-  })
-);
-
-// Get Available Tables
-router.get(
-  "/available",
-  authenticate,
-  asyncHandler(async (req, res) => {
-    const tables = await Table.findAll({
-      where: { status: "free", isActive: true },
-      order: [["tableNumber", "ASC"]],
-    });
-
-    res.json({ success: true, data: { tables } });
-  })
-);
-
-// Get Occupied Tables
-router.get(
-  "/occupied",
-  authenticate,
-  asyncHandler(async (req, res) => {
-    const tables = await Table.findAll({
-      where: { status: "occupied", isActive: true },
-      include: [
-        {
-          model: Order,
-          as: "orders",
-          limit: 1,
-          order: [["createdAt", "DESC"]],
-        },
-      ],
-      order: [["tableNumber", "ASC"]],
-    });
-
-    res.json({ success: true, data: { tables } });
-  })
-);
-
-// Get Table Details
+// Get Table Details - Updated to accept both UUID and tableNumber
 router.get(
   "/:id",
   authenticate,
   asyncHandler(async (req, res) => {
-    const table = await Table.findByPk(req.params.id, {
-      include: [{ model: Order, as: "orders" }],
-    });
+    const { id } = req.params;
+
+    let table;
+    if (isUUID(id)) {
+      // Find by UUID
+      table = await Table.findByPk(id, {
+        include: [{ model: Order, as: "orders" }],
+      });
+    } else {
+      // Find by tableNumber
+      const tableNumber = parseInt(id);
+      if (isNaN(tableNumber)) {
+        throw new AppError("Invalid table identifier", 400, "INVALID_INPUT");
+      }
+      table = await Table.findOne({
+        where: { tableNumber },
+        include: [{ model: Order, as: "orders" }],
+      });
+    }
 
     if (!table) throw new AppError("Table not found", 404, "NOT_FOUND");
 
@@ -107,45 +52,25 @@ router.get(
   })
 );
 
-// Create Table
-router.post(
-  "/",
-  authenticate,
-  authorize("admin", "manager"),
-  validate(schemas.createTable),
-  asyncHandler(async (req, res) => {
-    const { tableNumber } = req.validatedData;
-
-    const existing = await Table.findOne({ where: { tableNumber } });
-    if (existing) {
-      throw new AppError("Table number already exists", 400, "DUPLICATE_TABLE");
-    }
-
-    const table = await Table.create(req.validatedData);
-
-    await AuditLog.create({
-      action: "table.created",
-      entityType: "Table",
-      entityId: table.id,
-      userId: req.user.id,
-      userRole: req.user.role,
-      newValues: req.validatedData,
-      severity: "info",
-    });
-
-    logger.info("Table created", { tableId: table.id, createdBy: req.user.id });
-
-    res.status(201).json({ success: true, data: { table } });
-  })
-);
-
-// Update Table
+// Update Table - Accept both UUID and tableNumber
 router.put(
   "/:id",
   authenticate,
   authorize("admin", "manager"),
   asyncHandler(async (req, res) => {
-    const table = await Table.findByPk(req.params.id);
+    const { id } = req.params;
+
+    let table;
+    if (isUUID(id)) {
+      table = await Table.findByPk(id);
+    } else {
+      const tableNumber = parseInt(id);
+      if (isNaN(tableNumber)) {
+        throw new AppError("Invalid table identifier", 400, "INVALID_INPUT");
+      }
+      table = await Table.findOne({ where: { tableNumber } });
+    }
+
     if (!table) throw new AppError("Table not found", 404, "NOT_FOUND");
 
     const oldValues = { ...table.toJSON() };
@@ -169,12 +94,24 @@ router.put(
   })
 );
 
-// Update Table Status
+// Update Table Status - Accept both UUID and tableNumber
 router.put(
   "/:id/status",
   authenticate,
   asyncHandler(async (req, res) => {
-    const table = await Table.findByPk(req.params.id);
+    const { id } = req.params;
+
+    let table;
+    if (isUUID(id)) {
+      table = await Table.findByPk(id);
+    } else {
+      const tableNumber = parseInt(id);
+      if (isNaN(tableNumber)) {
+        throw new AppError("Invalid table identifier", 400, "INVALID_INPUT");
+      }
+      table = await Table.findOne({ where: { tableNumber } });
+    }
+
     if (!table) throw new AppError("Table not found", 404, "NOT_FOUND");
 
     const { status } = req.body;
@@ -203,89 +140,57 @@ router.put(
   })
 );
 
-// Select Table
+// Select Table - Accept both UUID and tableNumber
 router.put(
   "/:id/select",
   authenticate,
   asyncHandler(async (req, res) => {
-    const table = await Table.findByPk(req.params.id);
+    const { id } = req.params;
+
+    let table;
+    if (isUUID(id)) {
+      table = await Table.findByPk(id);
+    } else {
+      const tableNumber = parseInt(id);
+      if (isNaN(tableNumber)) {
+        throw new AppError("Invalid table identifier", 400, "INVALID_INPUT");
+      }
+      table = await Table.findOne({ where: { tableNumber } });
+    }
+
     if (!table) throw new AppError("Table not found", 404, "NOT_FOUND");
 
     // Store in session/cache (simplified - in production use Redis)
     req.session = req.session || {};
-    req.session.selectedTableId = req.params.id;
+    req.session.selectedTableId = table.id; // Always store the UUID
 
     res.json({ success: true, data: { table, message: "Table selected" } });
   })
 );
 
-// Release Table Selection
-router.put(
-  "/:id/release",
-  authenticate,
-  asyncHandler(async (req, res) => {
-    if (req.session) {
-      delete req.session.selectedTableId;
-    }
-
-    res.json({ success: true, message: "Table selection released" });
-  })
-);
-
-// Get Currently Selected Table
-router.get(
-  "/selected/current",
-  authenticate,
-  asyncHandler(async (req, res) => {
-    const selectedTableId = req.session?.selectedTableId;
-
-    if (!selectedTableId) {
-      return res.json({ success: true, data: { table: null } });
-    }
-
-    const table = await Table.findByPk(selectedTableId);
-
-    res.json({ success: true, data: { table } });
-  })
-);
-
-// Bulk Update Table Statuses
-router.post(
-  "/bulk-update",
-  authenticate,
-  authorize("admin", "manager"),
-  asyncHandler(async (req, res) => {
-    const { tableIds, status } = req.body;
-
-    if (!Array.isArray(tableIds) || tableIds.length === 0) {
-      throw new AppError("Table IDs required", 400, "INVALID_INPUT");
-    }
-
-    await Table.update({ status }, { where: { id: { [Op.in]: tableIds } } });
-
-    await AuditLog.create({
-      action: "table.bulk_status_updated",
-      entityType: "Table",
-      entityId: tableIds.join(","),
-      userId: req.user.id,
-      userRole: req.user.role,
-      newValues: { status, count: tableIds.length },
-      severity: "info",
-    });
-
-    res.json({ success: true, message: `${tableIds.length} tables updated` });
-  })
-);
-
-// Get Table Order History
+// Get Table Order History - Accept both UUID and tableNumber
 router.get(
   "/:id/orders",
   authenticate,
   asyncHandler(async (req, res) => {
+    const { id } = req.params;
     const { page = 1, limit = 10 } = req.query;
 
+    let table;
+    if (isUUID(id)) {
+      table = await Table.findByPk(id);
+    } else {
+      const tableNumber = parseInt(id);
+      if (isNaN(tableNumber)) {
+        throw new AppError("Invalid table identifier", 400, "INVALID_INPUT");
+      }
+      table = await Table.findOne({ where: { tableNumber } });
+    }
+
+    if (!table) throw new AppError("Table not found", 404, "NOT_FOUND");
+
     const orders = await Order.findAll({
-      where: { tableId: req.params.id },
+      where: { tableId: table.id }, // Use the table's UUID
       include: [
         {
           model: OrderLine,
@@ -298,7 +203,7 @@ router.get(
       order: [["createdAt", "DESC"]],
     });
 
-    const total = await Order.count({ where: { tableId: req.params.id } });
+    const total = await Order.count({ where: { tableId: table.id } });
 
     res.json({
       success: true,
@@ -314,13 +219,25 @@ router.get(
   })
 );
 
-// Delete Table
+// Delete Table - Accept both UUID and tableNumber
 router.delete(
   "/:id",
   authenticate,
   authorize("admin"),
   asyncHandler(async (req, res) => {
-    const table = await Table.findByPk(req.params.id);
+    const { id } = req.params;
+
+    let table;
+    if (isUUID(id)) {
+      table = await Table.findByPk(id);
+    } else {
+      const tableNumber = parseInt(id);
+      if (isNaN(tableNumber)) {
+        throw new AppError("Invalid table identifier", 400, "INVALID_INPUT");
+      }
+      table = await Table.findOne({ where: { tableNumber } });
+    }
+
     if (!table) throw new AppError("Table not found", 404, "NOT_FOUND");
 
     await table.destroy();
@@ -328,14 +245,14 @@ router.delete(
     await AuditLog.create({
       action: "table.deleted",
       entityType: "Table",
-      entityId: req.params.id,
+      entityId: table.id,
       userId: req.user.id,
       userRole: req.user.role,
       severity: "warning",
     });
 
     logger.info("Table deleted", {
-      tableId: req.params.id,
+      tableId: table.id,
       deletedBy: req.user.id,
     });
 

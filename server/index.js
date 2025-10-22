@@ -18,7 +18,7 @@ import systemRoutes from "./routes/system.routes.js";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 
 // Security Middleware
 app.use(helmet());
